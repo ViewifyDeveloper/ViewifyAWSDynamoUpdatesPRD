@@ -42,10 +42,11 @@ exports.handler = async (event) => {
 
 			s3.headObject(mdparams, function(err, data) {
 				if (err) {
-					//Error occurred 
-					console.log(err, err.stack);
-					event.caption = "Error"
-					reject(err);
+					
+						//Error occurred 
+					var map1 = new Map(); //Create map of all metadata and return it from promise
+					map1.set('error', true);
+					reject(map1);
 					
 				}
 				else {
@@ -59,13 +60,14 @@ exports.handler = async (event) => {
 					resolve("ios metadata grabbed");
 					*/
 					
-					
-					
-					event.caption = data["Metadata"]["caption"]
-					event.userid = data["Metadata"]["userid"]
-					event.storyid = data["Metadata"]["storyid"]
-					event.draftcontentid  = data["Metadata"]["draftcontentid"]
-					resolve("ios metadata grabbed");
+					var map1 = new Map(); //Create map of all metadata and return it from promise
+          			map1.set('caption', data["Metadata"]["caption"]);	
+          			map1.set('storyid', data["Metadata"]["storyid"]);
+          			map1.set('userid', data["Metadata"]["userid"]);
+          			map1.set('draftcontentid', data["Metadata"]["draftcontentid"]);
+          			map1.set('appupload', data["Metadata"]["appupload"]); //Check if upload is coming from app versus migration
+          			map1.set('error', false);
+					resolve(map1);
 					
 					
 					
@@ -75,7 +77,18 @@ exports.handler = async (event) => {
 
 		})
 		
-		await metadataPromise;
+		let metadataMap = await metadataPromise;
+		const hasError = metadataMap.get('error');
+		console.log('Error parsing metadata: ', hasError)
+		if (hasError) {
+			return;
+		}
+
+		var isInAppUpload =  false;
+		if (metadataMap.get('appupload') == 'true') {
+			isInAppUpload = true;
+		}
+		console.log('isInAppUpload', isInAppUpload);
 		
 		
 		//remove guid from event data (primary db table key) and iterate over event objects
@@ -132,14 +145,19 @@ exports.handler = async (event) => {
 				const hlsUrlString = event.hlsUrl;
 				const vidurl = encodeURIComponent(hlsUrlString); //Encoded video URL
 				var https = require('https');
-				const vidCaption = 
-				'/addVideo?caption=' + enccap
-				+ '&userid=' + event.userid 
+				var firebaseCloudURL = '';
+				if (isInAppUpload) {
+					firebaseCloudURL = '/addVideo?caption=' + enccap
+				+ '&userid=' + metadataMap.get('userid')
 				+ '&thumburl=' + thumburl 
-				+ '&storyid=' + event.storyid 
-				+ '&draftcontentid=' + event.draftcontentid 
+				+ '&storyid=' + metadataMap.get('storyid')
+				+ '&draftcontentid=' + metadataMap.get('draftcontentid') 
 				+ '&vidurl=' + vidurl;
-				var firebasePathURI = encodeURI(vidCaption); 
+				}
+				if (firebaseCloudURL == '') {
+					reject('fail');
+				}
+				var firebasePathURI = encodeURI(firebaseCloudURL); 
 				var options = {
 					host: 'us-central1-viewify-5c2f8.cloudfunctions.net',
 					port: 443,
