@@ -33,7 +33,7 @@ exports.handler = async (event) => {
 		//GET EXPERIENCE METADATA FROM S3 OBJECT AND ADD TO THE EVENT SO IT CAN BE SENT TO FIREBASE
 		var s3 = new AWS.S3()
 		var mdparams = {
-			Bucket: "viewifyvideoprocessing-source-1vnu9luaobnpt",
+			Bucket: "viewify-source-1hhupvqw8kb6h",
 			Key: event.srcVideo
 		};
 		
@@ -43,45 +43,39 @@ exports.handler = async (event) => {
 			s3.headObject(mdparams, function(err, data) {
 				if (err) {
 					//Error occurred 
-					var map1 = new Map(); //Create map of all metadata and return it from promise
-					map1.set('error', true);
+					console.log(err, err.stack);
+					event.caption = "Error"
 					reject(err);
 					
 				}
 				else {
-
-					var map1 = new Map(); //Create map of all metadata and return it from promise
-          			map1.set('caption', data["Metadata"]["caption"]);	
-          			map1.set('expid', data["Metadata"]["expid"]);
-          			map1.set('priority', data["Metadata"]["priority"]);
-          			map1.set('storyid', data["Metadata"]["storyid"]);
-          			map1.set('userid', data["Metadata"]["userid"]);
-          			map1.set('draftcontentid', data["Metadata"]["draftcontentid"]);
-          			map1.set('appUpload', data["Metadata"]["appUpload"]); //Check if upload is coming from app versus migration
-          			map1.set('error', false);
 					//Successful response
 					console.log(data);
-					resolve(map1);
+					
+					/*
+					event.caption = "Test"
+					event.userid = "Test"
+					event.storyid = "Test"
+					resolve("ios metadata grabbed");
+					*/
+					
+					
+					
+					event.caption = data["Metadata"]["caption"]
+					event.userid = data["Metadata"]["userid"]
+					event.storyid = data["Metadata"]["storyid"]
+					event.draftcontentid  = data["Metadata"]["draftcontentid"]
+					resolve("ios metadata grabbed");
+					
+					
+					
 				} 
 		
 			});
 
 		})
 		
-		let metadataMap = await metadataPromise;
-		const hasError = metadataMap.get('error');
-		console.log('Error parsing metadata: ', hasError)
-		if (hasError) {
-			return;
-		}
-
-		var isInAppUpload =  false;
-		if (metadataMap.get('appUpload') == 'true') {
-			isInAppUpload = true;
-		}
-		console.log('isInAppUpload', isInAppUpload);
-
-
+		await metadataPromise;
 		
 		
 		//remove guid from event data (primary db table key) and iterate over event objects
@@ -112,7 +106,10 @@ exports.handler = async (event) => {
 		await dynamo.update(params).promise();
 		
 		//START CUSTOM CODE TO UPDATE FIREBASE WHEN MEDIA CONVERSION WORKFLOW IS COMPLETE
+		
 		if (event.workflowStatus == "Complete") {
+		
+			
 			console.log("Writing to Firebase")
 			var https = require('https');
 			const firebasePromise = new Promise(function(resolve, reject) {
@@ -129,40 +126,22 @@ exports.handler = async (event) => {
 					console.log('defined thumb array', thumbnailURLs[0])
 					thumburlstring = thumbnailURLs[0]; 
 				}
-				const captionString = metadataMap.get('caption');
-				var enccap = captionString; //Encoded caption
-				if (!enccap || enccap.length === 0 || enccap === "."){
-					enccap = " "; //If caption is undefined, replace with single space
-				}
-				enccap = enccap.replace(/#/g,"%23"); //Hashtags need to be replaced, they are breaking URL params use the /g tag to replace them globally
-				console.log('capstring', captionString)
-				console.log('enccap', enccap)
-				console.log('thumbURLToEncode', thumburlstring)
+				const captionString = event.caption;
+				const enccap = captionString; //Encoded caption
 				const thumburl = encodeURIComponent(thumburlstring);
-				console.log('encodedURL', thumburl)
 				const hlsUrlString = event.hlsUrl;
 				const vidurl = encodeURIComponent(hlsUrlString); //Encoded video URL
 				var https = require('https');
-				var firebaseCloudURL = '';
-				if (isInAppUpload) {
-					firebaseCloudURL = '/addVideo?caption=' + enccap
-				+ '&userid=' + metadataMap.get('userid')
+				const vidCaption = 
+				'/addVideo?caption=' + enccap
+				+ '&userid=' + event.userid 
 				+ '&thumburl=' + thumburl 
-				+ '&storyid=' + metadataMap.get('storyid')
-				+ '&draftcontentid=' + metadataMap.get('draftcontentid') 
+				+ '&storyid=' + event.storyid 
+				+ '&draftcontentid=' + event.draftcontentid 
 				+ '&vidurl=' + vidurl;
-				} else {
-					firebaseCloudURL = '/addMigratedVideo?caption=' + enccap
-				+ '&expid=' + metadataMap.get('expid')
-				+ '&priority=' + metadataMap.get('priority')
-				+ '&storyid=' + metadataMap.get('storyid')
-				+ '&userid=' + metadataMap.get('userid')
-				+ '&thumburl=' + thumburl
-				+ '&vidurl=' + vidurl;
-				}
-				var firebasePathURI = encodeURI(firebaseCloudURL); 
+				var firebasePathURI = encodeURI(vidCaption); 
 				var options = {
-					host: 'us-central1-viewifyproduction.cloudfunctions.net',
+					host: 'us-central1-viewify-5c2f8.cloudfunctions.net',
 					port: 443,
 					path: firebasePathURI,
 					method: 'GET'
@@ -180,11 +159,15 @@ exports.handler = async (event) => {
 				req.on('error', function(e) {
 					reject(e);
 				});
+				
 
 			})
 
 			await firebasePromise;
+			
 		}
+		
+		
 		//END FIREBASE CODE
 
 		// Get updated data and reconst event data to return
